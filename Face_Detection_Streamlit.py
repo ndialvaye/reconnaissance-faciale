@@ -6,6 +6,7 @@ import os
 import tempfile
 from datetime import datetime
 from uuid import uuid4
+from PIL import Image
 
 # === Dossier pour visages connus ===
 data_dir = "known_faces"
@@ -34,7 +35,7 @@ st.title("Détection et reconnaissance de visages - Viola-Jones + Deep Learning"
 
 st.markdown("""
 ## Instructions
-- Activez la webcam.
+- Uploadez une image contenant des visages.
 - Ajustez les paramètres de détection `scaleFactor` et `minNeighbors`.
 - Choisissez la couleur du rectangle de détection.
 - Cliquez sur **Capturer l'image** pour sauvegarder une image.
@@ -47,61 +48,52 @@ color_bgr = tuple(int(color.lstrip('#')[i:i+2], 16) for i in (4, 2, 0))
 scaleFactor = st.slider("scaleFactor (Viola-Jones)", 1.1, 2.0, 1.3, step=0.1)
 minNeighbors = st.slider("minNeighbors (Viola-Jones)", 1, 10, 5)
 capture = st.button("📸 Capturer l'image")
-stframe = st.empty()
 
-cap = cv2.VideoCapture(0)
+uploaded_file = st.file_uploader("Uploader une image", type=["jpg", "jpeg", "png"])
 
-if not cap.isOpened():
-    st.error("Erreur : Impossible d'accéder à la caméra.")
+if uploaded_file is not None:
+    file_bytes = np.asarray(bytearray(uploaded_file.read()), dtype=np.uint8)
+    frame = cv2.imdecode(file_bytes, 1)
+    gray = cv2.cvtColor(frame, cv2.COLOR_BGR2GRAY)
+    rgb_frame = cv2.cvtColor(frame, cv2.COLOR_BGR2RGB)
+
+    # Détection avec Viola-Jones
+    faces = face_cascade.detectMultiScale(gray, scaleFactor=scaleFactor, minNeighbors=minNeighbors)
+
+    for (x, y, w, h) in faces:
+        top, right, bottom, left = y, x + w, y + h, x
+        face_image = rgb_frame[top:bottom, left:right]
+        encoding = face_recognition.face_encodings(rgb_frame, [(top, right, bottom, left)])
+
+        name = "Inconnu"
+        if encoding:
+            matches = face_recognition.compare_faces(known_face_encodings, encoding[0])
+            if True in matches:
+                match_index = matches.index(True)
+                name = known_face_names[match_index]
+
+        cv2.rectangle(frame, (left, top), (right, bottom), color_bgr, 2)
+        cv2.putText(frame, name, (left, top - 10), cv2.FONT_HERSHEY_SIMPLEX, 0.75, color_bgr, 2)
+
+        if name == "Inconnu":
+            form_id = str(uuid4())
+            with st.form(key=form_id):
+                new_name = st.text_input("Nom du visage inconnu :")
+                submitted = st.form_submit_button("Enregistrer")
+                if submitted and new_name:
+                    save_path = os.path.join(data_dir, f"{new_name}.jpg")
+                    face_rgb = cv2.cvtColor(frame[top:bottom, left:right], cv2.COLOR_BGR2RGB)
+                    cv2.imwrite(save_path, face_rgb)
+                    st.success(f"Visage de {new_name} enregistré.")
+                    known_face_encodings, known_face_names = load_known_faces()
+
+    st.image(cv2.cvtColor(frame, cv2.COLOR_BGR2RGB), channels="RGB")
+
+    if capture:
+        timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
+        file_path = os.path.join(tempfile.gettempdir(), f"capture_{timestamp}.png")
+        cv2.imwrite(file_path, frame)
+        st.success(f"Image capturée : {file_path}")
+        st.image(file_path, caption="Image sauvegardée", use_column_width=True)
 else:
-    while True:
-        ret, frame = cap.read()
-        if not ret:
-            st.error("Erreur lors de la lecture de la caméra.")
-            break
-
-        gray = cv2.cvtColor(frame, cv2.COLOR_BGR2GRAY)
-        rgb_frame = cv2.cvtColor(frame, cv2.COLOR_BGR2RGB)
-
-        # Détection avec Viola-Jones
-        faces = face_cascade.detectMultiScale(gray, scaleFactor=scaleFactor, minNeighbors=minNeighbors)
-
-        for (x, y, w, h) in faces:
-            top, right, bottom, left = y, x + w, y + h, x
-            face_image = rgb_frame[top:bottom, left:right]
-
-            encoding = face_recognition.face_encodings(rgb_frame, [(top, right, bottom, left)])
-            name = "Inconnu"
-            if encoding:
-                matches = face_recognition.compare_faces(known_face_encodings, encoding[0])
-                if True in matches:
-                    match_index = matches.index(True)
-                    name = known_face_names[match_index]
-
-            cv2.rectangle(frame, (left, top), (right, bottom), color_bgr, 2)
-            cv2.putText(frame, name, (left, top - 10), cv2.FONT_HERSHEY_SIMPLEX, 0.75, color_bgr, 2)
-
-            if name == "Inconnu":
-                form_id = str(uuid4())
-                with st.form(key=form_id):
-                    new_name = st.text_input("Nom du visage inconnu :")
-                    submitted = st.form_submit_button("Enregistrer")
-                    if submitted and new_name:
-                        save_path = os.path.join(data_dir, f"{new_name}.jpg")
-                        face_rgb = cv2.cvtColor(frame[top:bottom, left:right], cv2.COLOR_BGR2RGB)
-                        cv2.imwrite(save_path, face_rgb)
-                        st.success(f"Visage de {new_name} enregistré.")
-                        known_face_encodings, known_face_names = load_known_faces()
-                        break
-
-        stframe.image(cv2.cvtColor(frame, cv2.COLOR_BGR2RGB), channels="RGB")
-
-        if capture:
-            timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
-            file_path = os.path.join(tempfile.gettempdir(), f"capture_{timestamp}.png")
-            cv2.imwrite(file_path, frame)
-            st.success(f"Image capturée : {file_path}")
-            st.image(file_path, caption="Image sauvegardée", use_column_width=True)
-            break
-
-    cap.release()
+    st.info("Veuillez uploader une image pour commencer.")
